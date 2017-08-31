@@ -1,0 +1,156 @@
+-- selector -> 0 -> change the selector -> bus_state = end -> change the processor.
+-- selector -> pending -> adding number.
+
+MODULE processor(signal, bus_signal)
+VAR
+    cache                   : {invalid, modified, shared};
+    action                  : {idle, load, store, pending};
+ASSIGN
+    init(cache)             := invalid;
+    init(action)            := idle;
+    
+    next(action) := case
+        signal = GRANTED : {idle, load, store};
+        signal = PEND : pending;
+                esac;
+    
+    -- if granted, then it's my turn.
+    next(cache) := case
+        signal = GRANTED : case
+            bus_signal = NONE : cache;
+
+            bus_signal = GETS & cache = invalid : shared;
+            bus_signal = GETS & cache = shared : cache;
+            bus_signal = GETS & cache = modified : cache;
+
+            bus_signal = GETX & cache = invalid : modified;
+            -- bus_signal = GETX & cache = shared : error;
+            bus_signal = GETX & cache = modified : cache;
+
+            bus_signal = UPGRADE & cache = shared : modified;
+            -- bus_signal = UPGRADE & (cache = invalid | cache = modified) = error;
+
+            bus_signal = SOURCE & (cache = invalid | cache = shared) : modified;
+            -- bus_signal = SOURCE & cache = modified : error;
+            TRUE : cache;
+                        esac;
+        signal = PEND : case
+            bus_signal = NONE : cache;
+
+            bus_signal = GETS & cache = invalid : cache;
+            bus_signal = GETS & cache = shared : cache;
+            bus_signal = GETS & cache = modified : shared;
+
+            bus_signal = GETX & cache = invalid : cache;
+            bus_signal = GETX & (cache = shared | cache = modified) : invalid;
+
+            bus_signal = UPGRADE & cache = invalid : cache;
+            bus_signal = UPGRADE & (cache = shared | cache = modified) : invalid;
+
+            bus_signal = SOURCE & (cache = invalid | cache = shared) : invalid;
+            bus_signal = SOURCE & cache = modified : invalid;
+            TRUE : cache;
+                    esac;
+                esac;
+
+MODULE main
+VAR
+    cpu1                    : processor(cpu1_signal, bus_action);
+    cpu2                    : processor(cpu2_signal, bus_action);
+    cpu1_signal : {GRANTED, PEND};
+    cpu2_signal : {GRANTED, PEND};
+    selector                : {0, 1, 2};
+    bus_action              : {NONE, GETS, GETX, SOURCE, UPGRADE};
+    bus_state               : {WORKING, END};
+    
+ASSIGN
+    init(bus_action)        := NONE;
+    init(bus_state)         := END;
+    init(selector)          := 0;
+    init(cpu1_signal) := GRANTED;
+    init(cpu2_signal) := GRANTED;
+
+    next(cpu1_signal) := case
+        cpu1_signal = GRANTED & selector = 1 : cpu1_signal;
+        cpu1_signal = GRANTED & selector = 2 : PEND;
+        cpu1_signal = GRANTED & selector = 0 : cpu1_signal;
+
+        cpu1_signal = PEND & selector = 1 : GRANTED;
+        cpu1_signal = PEND & selector = 2 : cpu1_signal;
+        cpu1_signal = PEND & selector = 0 : GRANTED;
+        -- cpu1_signal should be the state PEND in selector 0 state.
+                    esac;
+    next(cpu2_signal) := case
+        -- later, if this logic is correct, then move the self loop to true state.
+        cpu2_signal = GRANTED & selector = 1 : PEND;
+        cpu2_signal = GRANTED & selector = 2 : cpu2_signal;
+        cpu2_signal = GRANTED & selector = 0: cpu2_signal;
+
+        cpu2_signal = PEND & selector = 1 : cpu2_signal;
+        cpu2_signal = PEND & selector = 2 : GRANTED;
+        cpu2_signal = PEND & selector = 0 : GRANTED;
+        -- cpu1_signal should be the state PEND in selector 0 state.
+                    esac;
+
+    next(selector) := case
+        selector = 0 : case
+            -- bus_state = WORKING -> this can't be possible.
+            bus_state = END & cpu1_signal = GRANTED & (cpu1.action = pending | cpu1.action = load | cpu1.action = store) : 1;
+            bus_state = END & cpu2_signal = GRANTED & (cpu2.action = pending | cpu2.action = load | cpu2.action = store) : 2;
+            TRUE : selector;
+                    esac;
+        selector = 1 : case
+            bus_state = END & cpu1_signal = GRANTED & cpu2_signal = PEND : 0;
+            bus_state = WORKING : selector;
+            TRUE : selector;
+                    esac;
+        selector = 2 : case
+            bus_state = END & cpu1_signal = PEND & cpu2_signal = GRANTED : 0;
+            bus_state = WORKING : selector;
+            TRUE : selector;
+                    esac;
+                esac;
+    
+    next(bus_state) := case
+        bus_state = END & selector = 0 : bus_state;
+        bus_state = END & (selector = 1 | selector = 2) & !(cpu1_signal = GRANTED & cpu2_signal = GRANTED) : WORKING;
+        -- what if cpu1_signal is GRANTED and cpu2_signal is PEND? or vise versa?
+        bus_state = WORKING & bus_action = NONE : END;
+        TRUE : bus_state;
+                    esac;
+
+    next(bus_action) := case
+        selector = 1 : case
+            cpu1_signal = GRANTED & cpu2_signal = GRANTED : NONE;
+            cpu1.action = idle : NONE;
+            cpu1.action = load & cpu1.cache = invalid : GETS;
+            cpu1.action = load & (cpu1.cache = modified | cpu1.cache = shared) : NONE;
+            cpu1.action = store & cpu1.cache = invalid & (cpu2.cache = invalid | cpu2.cache = shared) : GETX;
+            cpu1.action = store & cpu1.cache = invalid & cpu2.cache = modified : SOURCE;
+            cpu1.action = store & cpu1.cache = modified : NONE;
+            cpu1.action = store & cpu1.cache = shared : UPGRADE;
+            cpu1.action = pending : NONE;
+                    esac;
+        selector = 2 : case
+            cpu1_signal = GRANTED & cpu2_signal = GRANTED : NONE;
+            cpu2.action = idle : NONE;
+            cpu2.action = load & cpu2.cache = invalid : GETS;
+            cpu2.action = load & (cpu2.cache = modified | cpu2.cache = shared) : NONE;
+            cpu2.action = store & cpu2.cache = invalid & (cpu1.cache = invalid | cpu1.cache = shared) : GETX;
+            cpu2.action = store & cpu2.cache = invalid & cpu1.cache = modified : SOURCE;
+            cpu2.action = store & cpu2.cache = modified : NONE;
+            cpu2.action = store & cpu2.cache = shared : UPGRADE;
+            cpu2.action = pending : NONE;
+                    esac;
+        selector = 0 : NONE;
+                esac;
+
+SPEC AG ! (cpu1.cache = modified & cpu2.cache = modified);
+SPEC AF ((cpu1.action = pending) -> (cpu1.action = load | cpu1.action = store));
+SPEC AF ((cpu2.action = pending) -> (cpu2.action = load | cpu2.action = store));
+
+-- need to check if cpu1 is working while cpu2 is working.
+SPEC AG ! (selector = 1 & cpu2.action != pending);
+
+    
+

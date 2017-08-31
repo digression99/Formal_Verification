@@ -1,0 +1,53 @@
+MODULE main
+VAR
+	c1_state : {modified, shared, invalid};
+	c2_state : {modified, shared, invalid};
+
+
+
+ASSIGN
+	init(c1_state) := invalid;
+	init(c2_state) := invalid;
+	next(c1_state) := case
+			c1_state = invalid : shared;
+			TRUE : invalid;
+			esac;
+SPEC
+	AG c1_state != modified;
+
+MODULE busaction(c1, c2, op, num, ret)
+VAR
+	action : {GETS, GETX, SOURCE, UPGRADE};
+ASSIGN
+	next(ret) := case
+		action = GETS &   : shared;
+		action = GETS
+
+
+
+		esac;
+
+
+
+MODULE change(c1, c2, op, num)
+VAR
+	c1_s : c1;
+	c2_s : c2;
+ASSIGN
+	next(c1_s) := case
+		num = 1 & op = load & c1 = invalid & c2 = invalid : shared;
+		num = 1 & op = load & c1 = invalid & c2 = modified : shared;
+		num = 1 & op = store & c1 = invalid : busaction(c1, c2, GETX, 1)
+		
+		TRUE : c1;
+		esac;
+	next(c2_s) := case
+		num = 1 & op = load & c2 = modified : shared;
+		num = 1 & op = store : invalid;
+
+		esac;
+	
+
+
+
+	

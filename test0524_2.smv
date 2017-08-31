@@ -1,0 +1,35 @@
+MODULE busaction(state)
+VAR
+	test1 : boolean;
+	test2 : boolean;
+ASSIGN
+	init(test1) := FALSE;
+	init(test2) := FALSE;
+	next(test1) := case
+		state = invalid : TRUE;
+		TRUE : FALSE;
+		esac;
+	next(test2) := case
+		state = shared : TRUE;
+		TRUE : FALSE;
+		esac;
+
+
+
+MODULE main
+VAR
+	test : busaction(state);
+	state : {shared, modified, invalid};
+ASSIGN
+	init(state) := shared;
+	next(state) := case
+		state = shared :
+			modified;
+				
+		state = modified :
+			invalid;
+			
+		state = invalid : shared;
+		esac;
+
+

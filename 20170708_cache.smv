@@ -1,0 +1,158 @@
+-- first draft
+-- write the core algorithm and leave the exception dealing.
+
+MODULE processor(bus_signal, selector_signal, id)
+VAR
+    cache_state : {invalid, modified, shared};
+    cpu_action : {idle, load, store, pending, locked};
+    saved_state : {none, idle, load, store};
+ASSIGN
+    init(cache_state) := invalid;
+    init(cpu_action) := idle;
+    init(saved_state) := none;
+
+    next(saved_state) := case
+        cpu_action = locked | cpu_action = pending : saved_state;
+        cpu_action = load | cpu_action = store : cpu_action;
+        cpu_action = idle : none;
+            esac;
+
+    next(cpu_action) := case
+        cpu_action = locked & bus_action = NONE & selector_signal = 0 : case
+            saved_state != none : saved_state;
+            saved_state = none : {idle, load, store};
+                esac;
+        cpu_action = load | cpu_action = store : case
+            selector = id : pending;
+            selector != id : locked;
+                esac;
+        selector_signal = 0 & bus_signal = NONE : case
+            saved_state = none : {idle, load, store};
+            saved_state != none : saved_state;
+                esac;
+        selector_signal == id & (cpu_action = load | cpu_action = store) : pending;
+        -- selector_signal == id & cpu_action = idle -> error;
+        selector_signal != id & (cpu_action = pending | cpu_action = load | cpu_action = store) : locked;
+
+    next(cache_state) := case
+        bus_signal = NONE | bus_signal = STAY : cache_state;
+        selector_signal == id : case
+            bus_signal = GETS & cache_state = invalid : shared;
+            bus_signal = GETS & cache_state = shared : cache_state;
+            bus_signal = GETS & cache_state = modified : cache_state;
+
+            bus_signal = GETX & cache_state = invalid : modified;
+            -- bus_signal = GETX & cache_state = shared : error;
+            bus_signal = GETX & cache_state = modified : cache_state;
+
+            -- bus_signal = UPGRADE & cache_state = invalid : error;
+            bus_signal = UPGRADE  & cache_state = shared : modified;
+            -- bus_signal = UPGRADE & cache_state = modified : error;
+
+            bus_signal = SOURCE & cache_state = invalid : modified;
+            bus_signal = SOURCE  & cache_state = shared : modified;
+             -- bus_signal = SOURCE & cache_state = modified : error;
+                esac;
+        selector_signal != id : case
+            bus_signal = GETS & cache_state = invalid : cache_state;
+            bus_signal = GETS & cache_state = shared : cache_state;
+            bus_signal = GETS & cache_state = modified : shared;
+
+            bus_signal = GETX & cache_state = invalid : cache_state;
+            bus_signal = GETX & cache_state = shared : invalid;
+            bus_signal = GETX & cache_state = modified : invalid;
+
+            bus_signal = UPGRADE & cache_state = invalid : cache_state;
+            bus_signal = UPGRADE  & cache_state = shared : invalid;
+            bus_signal = UPGRADE & cache_state = modified : invalid;
+
+            bus_signal = SOURCE & cache_state = invalid : cache_state;
+            bus_signal = SOURCE  & cache_state = shared : invalid;
+            bus_signal = SOURCE & cache_state = modified : invalid;
+                esac;
+            esac;
+
+MODULE main
+VAR
+    selector                : {0, 1, 2};
+    bus_action              : {NONE, GETS, GETX, SOURCE, UPGRADE, STAY};
+    cpu1 : processor(bus_action, selector, 1);
+    cpu2 : processor(bus_action, selector, 2);
+    cpu3 : processor(bus_action, selector, 3);
+ASSIGN
+    init(selector) := 0;
+    init(bus_action) := NONE;
+
+    next(selector) := case
+        selector != 0 : case
+            bus_action != NONE : 0;
+            bus_action = NONE : selector;
+                esac;
+        selector = 0 : case
+            cpu1.cpu_action != idle & (cpu2.cpu_action = idle & cpu3.cpu_action = idle) : 1;
+            cpu2.cpu_action != idle & (cpu1.cpu_action = idle & cpu3.cpu_action = idle) : 2;
+            cpu3.cpu_action != idle & (cpu1.cpu_action = idle & cpu2.cpu_action = idle) : 3;
+
+            cpu1.cpu_action != idle & cpu2.cpu_action != idle & cpu3.cpu_action = idle : {1, 2};
+            cpu1.cpu_action != idle & cpu3.cpu_action != idle & cpu2.cpu_action = idle : {1, 3};
+            cpu2.cpu_action != idle & cpu3.cpu_action != idle & cpu1.cpu_action = idle : {2, 3};
+
+            cpu1.cpu_action != idle & cpu2.cpu_action != idle & cpu3.cpu_action != idle : {1, 2, 3};
+                esac;
+            esac;
+    next(bus_action) := case
+        selector = 0 : bus_action;
+        bus_action != NONE : NONE;
+
+        selector = 1 : case
+            cpu1.saved_state = load : case
+                cpu1.cache_state = invalid & (cpu2.cache_state = invalid | cpu2.cache_state = shared) & (cpu3.cache_state = invalid | cache3.cache_state = shared) : GETS;
+                cpu1.cache_state = invalid & (cpu2.cache_state = modified | cpu3.cache_state = modified) : SOURCE;
+
+                -- if cpu1.cache_state is shared, then load means nothing.
+                -- this implies the bus action to be the stay state.
+                cpu1.cache_state = shared : STAY;
+                cpu1.cache_state = modified : STAY;
+                    esac;
+            cpu1_saved_state = store : case
+                cpu1.cache_state = invalid & (cpu2.cache_state = invalid | cpu2.cache_state = shared) & (cpu3.cache_state = invalid | cpu3.cache_state = shared) : GETX;
+                cpu1.cache_state = invalid & (cpu2.cache_state = modified | cpu3.cache_state = modified) : SOURCE;
+                cpu1.cache_state = shared : UPGRADE;
+                cpu1.cache_state = modified : STAY;
+                    esac;
+                esac;
+        selector = 2 : case
+            cpu2.saved_state = load : case
+                cpu2.cache_state = invalid & (cpu1.cache_state = invalid | cpu1.cache_state = shared) & (cpu3.cache_state = invalid | cache3.cache_state = shared) : GETS;
+                cpu2.cache_state = invalid & (cpu1.cache_state = modified | cpu3.cache_state = modified) : SOURCE;
+
+                -- if cpu1.cache_state is shared, then load means nothing.
+                -- this implies the bus action to be the stay state.
+                cpu2.cache_state = shared : STAY;
+                cpu2.cache_state = modified : STAY;
+                    esac;
+            cpu2_saved_state = store : case
+                cpu2.cache_state = invalid & (cpu1.cache_state = invalid | cpu1.cache_state = shared) & (cpu3.cache_state = invalid | cpu3.cache_state = shared) : GETX;
+                cpu2.cache_state = invalid & (cpu1.cache_state = modified | cpu3.cache_state = modified) : SOURCE;
+                cpu2.cache_state = shared : UPGRADE;
+                cpu2.cache_state = modified : STAY;
+                    esac;
+                esac;
+        selector = 3 : case
+            cpu3.saved_state = load : case
+                cpu3.cache_state = invalid & (cpu1.cache_state = invalid | cpu1.cache_state = shared) & (cpu2.cache_state = invalid | cache2.cache_state = shared) : GETS;
+                cpu3.cache_state = invalid & (cpu1.cache_state = modified | cpu2.cache_state = modified) : SOURCE;
+
+                -- if cpu1.cache_state is shared, then load means nothing.
+                -- this implies the bus action to be the stay state.
+                cpu3.cache_state = shared : STAY;
+                cpu3.cache_state = modified : STAY;
+                    esac;
+            cpu3_saved_state = store : case
+                cpu3.cache_state = invalid & (cpu1.cache_state = invalid | cpu1.cache_state = shared) & (cpu2.cache_state = invalid | cpu2.cache_state = shared) : GETX;
+                cpu3.cache_state = invalid & (cpu1.cache_state = modified | cpu2.cache_state = modified) : SOURCE;
+                cpu3.cache_state = shared : UPGRADE;
+                cpu3.cache_state = modified : STAY;
+                    esac;
+                esac;
+            esac;

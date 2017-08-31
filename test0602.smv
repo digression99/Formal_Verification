@@ -1,0 +1,32 @@
+-- test if dual condition check is possible.
+-- it's true.
+
+MODULE main
+VAR
+    state_1 : {one, two, three};
+    state_2 : {one, two, three};
+    --state_3 : {one, two, three};
+--    check : {tr, fl};
+
+ASSIGN
+    init(state_1) := {one, two, three};
+    init(state_2) := {one, two, three};
+    --init(state_3) := {one, two, three};
+
+    next(state_1) := case
+        state_1 = one | state_1 = two : three;
+        TRUE : {one, two};
+    --(state_1 = {one, two}) : three;
+    --(state_1 = {two, three}) : one;
+    --(state_1 = {one, three}) : two;
+                esac;
+    next(state_2) := {one, two, three};
+    --next(state_3) := {one, two, three};
+
+--    next(check) := case
+--        (state_1 = one & state_2 = {one, two}) & check = fl : tr;
+--        TRUE : fl;
+--                esac;
+
+SPEC
+    EF (state_1 = one & state_2 = one);

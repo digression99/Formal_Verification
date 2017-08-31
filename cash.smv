@@ -1,0 +1,77 @@
+
+
+
+MODULE cpuaction(action, proc)
+VAR
+	busact : { NONE, GETS, GETX, UPGRADE};
+	c1 : {invalid, shared, modified};
+	c2 : {invalid, shared, modified};
+ASSIGN
+	init(c1_state) := invalid;
+	init(c1_state) := invalid;
+	next(busact) := case
+		action = load : GETS;
+		action = store : GETX;
+		action = store & busact = GETX : UPGRADE;
+		busact = UPGRADE : NONE;  
+		esac;
+	next(c1) := case
+		proc = proc1 & action = GETS & c1 = invalid & c2 = invalid: shared;
+		proc = proc1 & action = GETX & c1 = invalid & c2 = invalid: modified;
+		proc = proc1 & action = UPGRADE & c1 = shared : modified;
+		proc = proc1 & action = GETX & c1 = shared : modified;
+
+		proc = proc2 & action = GETX : invalid;
+		proc = proc2 & action = UPGRADE & c2 = shared : invalid;
+		
+		TRUE : c1;
+		esac;
+	next(c2) := case
+		proc = proc2 & action = GETS & c1 = invalid & c2 = invalid : shared;
+		proc = proc2 & action = GETX & c1 = invalid & c2 = invalid : modified;
+		proc = proc2 & action = UPGRADE & c2 = shared : modified;
+		proc = proc2 & action = GETX & c2 = shared : modified;
+		
+		proc = proc1 & action = GETX : invalid;
+		proc = proc1 & action = UPGRADE & c1 = shared : invalid;
+
+		TRUE : c2;
+		esac;
+
+MODULE main
+VAR
+	cpu1_action : {idle, load, store};
+	cpu2_action : {idle, load, store};	
+
+
+MODULE main
+VAR
+	action : {idle, load, store};
+	proc : {proc1, proc2};
+	res : cpuaction(action, proc);
+	
+ASSIGN
+	init(action) := idle;
+	init(proc) := proc1;
+	next(action) := case
+		action = idle : load;
+		action = load : store;
+		action = store : idle;
+		esac;
+	next(proc) := case
+		action = store & proc = proc1 : proc2;
+		action = store & proc = proc2 : proc1;
+		TRUE : proc;
+		esac;
+
+SPEC
+	AG !(c1 = modified & c2 = modified)
+
+
+
+	
+
+
+
+
+

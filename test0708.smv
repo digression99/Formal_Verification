@@ -1,0 +1,2 @@
+-- test the difference between == and =
+-- = is also a difference check operator in a variable state.

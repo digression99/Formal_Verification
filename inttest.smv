@@ -1,0 +1,22 @@
+MODULE main
+VAR
+    a : 0..6;
+    b : {false, true};
+
+ASSIGN
+    init(a) := 0;
+    init(b) := false;
+
+    next(a) := case
+        b = false & a < 5 : a + 1;
+        b = false & a >= 5 : 0;
+        b = true & a < 5 : a + 1;
+        b = true & a >= 5 : 0;
+            esac;
+    
+    next(b) := case
+        b = false & a < 5 : b;
+        b = false & a >= 5 : true;
+        b = true & a < 5 : b;
+        b = true & a >= 5 : true;
+            esac;

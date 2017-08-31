@@ -1,0 +1,190 @@
+
+--
+-- selector -> 0 -> change the selector -> bus_state = end -> change the processor.
+--
+--
+--
+--
+--
+--
+--
+--
+
+
+
+
+MODULE processor()
+VAR
+    cache                   : {invalid, modified, shared};
+    action                  : {idle, load, store, pending};
+ASSIGN
+    init(cache)             := invalid;
+    init(action)            := idle;
+
+MODULE main
+VAR
+    cpu1                    : processor();
+    cpu2                    : processor();
+    selector                : {0, 1, 2};
+    bus_action              : {NONE, GETS, GETX, SOURCE, UPGRADE};
+    bus_state               : {WORKING, END};
+ASSIGN
+    init(bus_action)        := NONE;
+    init(bus_state)         := END;
+    init(selector)          := 0;
+
+    next(bus_state) := case
+        -- when the bus state is changed to working and when to change from end to working?
+                    esac;
+        -- if the bus state is working and both of the working state
+        -- if the bus action is decided and the proper cache action is done, then the bus state is end.
+        -- if it's working then it should be finished.
+        cpu1.action = {load, store, pending} & cpu2.action = {load, store, pending}     : WORKING;
+        bus_state = WORKING & bus_action != NONE                                        : END;
+        cpu1.action = idle & cpu2.action = idle & bus_state = {WORKING, END}            : END;
+
+    next(cpu1.action) := case
+        cpu1.action = pending & bus_state = END                                         : {load, store};
+        cpu2.action = idle & bus_state = END                                            : {idle, load, store};
+        bus_state = WORKING & selector = 2                                              : pending;
+        TRUE : idle;
+                    esac;
+    next(cpu2.action) := case
+        cpu2.action = pending & bus_state = END                                         : {load, store};
+        cpu1.action = idle & bus_state = END                                            : {idle, load, store};
+        bus_state = working & selector = 1                                              : pending;
+        TRUE : idle;
+                    esac;
+
+    -- selector -> what kind of processor is in action.
+    -- if one processor is in action (load or store), then the other processor can't do the action.
+    -- @@ should consider pending.
+    -- selector decides which cpu can operate.
+    -- if the selector is zero, then the bus action stops.
+    next(selector) := case
+        selector = 1 := case
+                cpu2.action = pending & bus_action = END                                : 2;
+                cpu1.action = idle & cpu2.action = {load, store}                        : 1;
+                cpu1.action = {load, store} & cpu2.action = idle                        : 2;
+                TRUE                                                                    : 0;
+                    esac;
+        selector = 2 := case
+                cpu1.action = pending & bus_action = END                                : 1;
+                cpu1.action = idle & cpu2.action = {load, store}                        : 1;
+                cpu1.action = {load, store} & cpu2.action = idle                        : 2;
+                TRUE                                                                    : 0;
+                    esac;
+                esac;
+
+    -- next bus action should be decided with the action of each processor and the state of each cache
+    -- the selector just decides which cpu actions to be considered.
+    -- this should be changed in parallel to the bus_state. 
+    -- -> if the bus_state is END, then it should be changed to WORKING. bus_action is NONE, then the bus_state should be END. 
+    next(bus_action) := case
+        selector = 1 := case
+            cpu1.action = load & cpu1.cache = invalid                                   : GETS;
+            cpu1.action = load & cpu1.cache = shared                                    : NONE;
+            cpu1.action = load & cpu1.cache = modified                                  : NONE;
+            cpu1.action = store & cpu1.cache = invalid                                  : GETX;
+            cpu1.action = store & cpu1.cache = shared                                   : UPGRADE;
+            cpu1.action = store & cpu1.cache = modified                                 : NONE;
+            cpu1.action = pending                                                       : NONE;
+            cpu1.action = idle                                                          : NONE;
+            TRUE                                                                        : NONE;
+                    esac;
+        selector = 2 := case
+            cpu2.action = load & cpu2.cache = invalid                                   : GETS;
+            cpu2.action = load & cpu2.cache = shared                                    : NONE;
+            cpu2.action = load & cpu2.cache = modified                                  : NONE;
+            cpu2.action = store & cpu2.cache = invalid                                  : GETX;
+            cpu2.action = store & cpu2.cache = shared                                   : UPGRADE;
+            cpu2.action = store & cpu2.cache = modified                                 : NONE;
+            cpu2.action = pending                                                       : NONE;
+            cpu2.action = idle                                                          : NONE;
+            TRUE                                                                        : NONE;
+                    esac;
+        selector = 0 : NONE;
+                    esac;
+
+    -- next cache state -> should be decided with the state of each cache and the bus action.
+    -- why shouldn't consider the cpu action? -> because bus action is decided by the cpu action.
+    -- the selector means that which cpu has made the operation.
+
+    -- how about the bus action is none?
+    next(cpu1.cache) := case
+        selector = 1 := case
+            bus_action = GETS & cpu1.cache = invalid                                    : shared;
+            bus_action = GETS & cpu1.cache = shared                                     : shared;
+            bus_action = GETS & cpu1.cache = modified                                   : modified;
+
+            bus_action = GETX & cpu1.cache = invalid                                    : modified;
+            bus_action = GETX & cpu1.cache = shared                                     : modified; -- this should be upgraded...
+
+            bus_action = UPGRADE & cpu1.cache = shared                                  : modified; 
+            bus_action = UPGRADE & cpu1.cache = modified                                : modified;
+
+            bus_action = SOURCE & cpu1.cache = shared                                   : modified;
+            TRUE : cpu1.cache;
+                    esac;
+        selector = 2 := case
+            bus_action = GETS & cpu1.cache = invalid : invalid;
+            bus_action = GETS & cpu1.cache = shared : shared;
+            bus_action = GETS & cpu1.cache = modified : shared;
+
+            bus_action = GETX & cpu1.cache = invalid : invalid;
+            bus_action = GETX & cpu1.cache = shared : invalid;
+            bus_action = GETX & cpu1.cache = modified : invalid;
+
+            -- bus_action = UPGRADE & cpu1.cache = {invalid, shared, modified} : invalid; ??
+            bus_action = UPGRADE & cpu1.cache = invalid : invalid;
+            bus_action = UPGRADE & cpu1.cache = shared : invalid;
+            bus_action = UPGRADE & cpu1.cache = modified : invalid;
+
+            bus_action = SOURCE & cpu1.cache = invalid : invalid;
+            bus_action = SOURCE & cpu1.cache = shared : shared;
+            bus_action = SOURCE & cpu1.cache = modified : shared; 
+            TRUE : cpu1.cache;
+                    esac;
+                esac;
+    next(cpu2.cache) := case
+        selector = 1 := case
+            bus_action = GETS & cpu2.cache = invalid : invalid;
+            bus_action = GETS & cpu2.cache = shared : shared;
+            bus_action = GETS & cpu2.cache = modified : shared;
+
+            -- bus_action = GETX & cpu2.cache = {invalid, shared, modified} : invalid; ??
+            bus_action = GETX & cpu2.cache = invalid : invalid;
+            bus_action = GETX & cpu2.cache = shared : invalid;
+            bus_action = GETX & cpu2.cache = modified : invalid;
+
+            bus_action = UPGRADE & cpu2.cache = invalid : invalid;
+            bus_action = UPGRADE & cpu2.cache = shared : invalid;
+            bus_action = UPGRADE & cpu2.cache = modified : invalid;
+
+            bus_action = SOURCE & cpu2.cache = invalid : invalid;
+            bus_action = SOURCE & cpu2.cache = shared : shared;
+            bus_action = SOURCE & cpu2.cache = modified : shared;
+            TRUE : cpu2.cache;
+                    esac;
+        selector = 2 := case
+            bus_action = GETS & cpu2.cache = invalid : shared;
+            bus_action = GETS & cpu2.cache = shared : shared;
+            bus_action = GETS & cpu2.cache = modified : modified;
+            
+            bus_action = GETX & cpu2.cache = invalid : modified;
+            bus_action = GETX & cpu2.cache = shared : modified;
+            bus_action = GETX & cpu2.cache = modified : modified;
+
+            -- bus_action = UPGRADE & cpu2.cache = invalid : error state.
+            bus_action = UPGRADE & cpu2.cache = shared : modified;
+            bus_action = UPGRADE & cpu2.cache = modified : modified;
+
+            bus_action = SOURCE & cpu2.cache = shared : modified;
+            TRUE : cpu2.cache;
+                    esac;
+                esac;
+
+
+
+
+    
