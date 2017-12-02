@@ -1,0 +1,38 @@
+
+
+
+MODULE cpu(my_num, signal)
+VAR
+	prev_state : {idle, write, read};
+	state : {idle, write, read, pending, locked};
+	cnt : 1..100;
+ASSIGN
+	init(state) := idle;
+	next(state) := case
+			
+
+	init(cnt) := 1;
+	next(cnt) := case
+			signal = my_num & cnt = 100 : 1;
+			signal = my_num & cnt < 100 : cnt + 1;
+			TRUE : cnt;
+		esac;
+
+-- proc_controller has to set the signal.
+MODULE proc_controller(cpu1, cpu2, cpu3, cpu4, signal)
+ASSIGN
+
+MODULE main
+VAR
+	signal : 0..4;
+	cpu1 : cpu(1, signal);
+	cpu2 : cpu(2, signal);
+	cpu3 : cpu(3, signal);
+	cpu4 : cpu(4, signal);
+	proc_controller : 
+ASSIGN
+
+
+	init(signal) := 0;
+	next(signal) := {0, 1, 2, 3, 4};
+

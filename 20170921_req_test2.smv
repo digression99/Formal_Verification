@@ -1,0 +1,50 @@
+MODULE cpu(cpu_num, signal)
+	VAR
+		state : {idle, req};
+	ASSIGN
+		init(state) := idle;
+		next(state) := case
+					   state = idle : {idle, req};
+					   state = req : idle;
+				esac;
+
+MODULE proc_controller(state_arr, signal)
+	VAR
+		random_selector : 1..4;
+	ASSIGN
+		init(random_selector) := 1;
+		next(random_selector) := {1, 2, 3, 4};
+		next(signal) := case
+					signal != 0 : 0;
+					signal = 0 : case
+							state_arr[random_selector] = TRUE : random_selector;
+							state_arr[random_selector] != TRUE : signal;
+						esac;
+				esac;
+MODULE main
+	VAR
+		signal : 0..4;
+		state_arr : array 1..4 of boolean;
+		cpu1 : cpu(1, signal);
+		cpu2 : cpu(2, signal);
+		cpu3 : cpu(3, signal);
+		cpu4 : cpu(4, signal);
+	ASSIGN
+		init(signal) := 0;
+		init(state_arr[1]) := FALSE;
+		init(state_arr[2]) := FALSE;
+		init(state_arr[3]) := FALSE;
+		init(state_arr[4]) := FALSE;
+		next(state_arr[1]) := case
+					cpu1.state = req : TRUE;
+					cpu1.state = idle : FALSE;
+				esac;
+		next(state_arr[2]) := case
+					cpu2.state = req : TRUE;
+					cpu2.state = idle : FALSE;
+				esac;
+		next(state_arr[3]) := case
+					cpu3.state = req : TRUE;
+					cpu3.state = idle : FALSE;
+				esac;
+		next(state_arr[4]) := case

@@ -1,0 +1,644 @@
+-- 20171127
+-- * deleted saved_state.
+-- * deleted locked, pending in cpu state.
+-- * moved bus_signal traisition to bus_controller.
+-- * deleted data_transfer.
+-- ** if nothing happens, then I should change cpu state, from read or write, to idle.
+-- how to signal this? --> try bus_signal = NONE, then change it to idle.
+-- check all the cache states if it's an array.
+
+MODULE cpu(bus_signal, proc_num, my_num)
+VAR
+    state : {idle, read, write, err};
+    L1 : cache(state, bus_signal, proc_num, my_num);
+ASSIGN
+    init(state) := idle;
+    
+    next(state) := case
+            proc_num = my_num : case
+                    state = idle : {idle, read, write};
+                    state = read : case
+                            bus_signal = NONE : state;
+                            bus_signal = BusRdS : state;
+                            bus_signal = BusRdX : err;
+                            bus_signal = DataFromCache | bus_signal = DataFromMem : idle;
+                            TRUE : err;
+                        esac;
+                    state = write : case
+                            bus_signal = NONE : state;
+                            bus_signal = BusRdS : err;
+                            bus_signal = BusRdX : state;
+                            bus_signal = DataFromCache | bus_signal = DataFromMem : idle;
+                            TRUE : err;
+                        esac;
+                    TRUE : err;
+                esac;
+            proc_num != my_num : case
+                    state = idle : {idle, read, write};
+                    state = read | state = write : state;
+                    TRUE : err;
+                esac;
+            TRUE : err;
+        esac;
+
+MODULE cache(cpu_state, bus_signal, proc_num, my_num)
+VAR
+    state : {modified, exclusive, shared, invalid, pending, err};
+ASSIGN
+    init(state) := invalid;
+    next(state) := case
+            proc_num = 0 : state;
+            proc_num = my_num : case
+                    state = invalid : case
+                            cpu_state = read | cpu_state = write : pending;
+                            cpu_state = idle : state;
+                            TRUE : err;
+                        esac;
+                    state = shared : case
+                            cpu_state = write & bus_signal = NONE : state;
+                            cpu_state = write & bus_signal = BusRdX : modified;
+                            cpu_state = read | cpu_state = idle : state;
+                            TRUE : err;
+                        esac;
+                    state = modified : case
+                            cpu_state = read | cpu_state = write | cpu_state = idle : state;
+                            TRUE : err;
+                        esac;
+                    state = exclusive : case
+                            cpu_state = read | cpu_state = idle : state;
+                            cpu_state = write & bus_signal = NONE : state;
+                            cpu_state = write & bus_signal = BusRdX : modified;
+                            TRUE : err;
+                        esac;
+                    state = pending : case
+                            cpu_state = read : case
+                                    bus_signal = BusRdS | bus_signal = BusRdX : state;
+                                    bus_signal = DataFromCache : shared;
+                                    bus_signal = DataFromMem : exclusive;
+                                    TRUE : err;
+                                esac;
+                            cpu_state = write : case
+                                    bus_signal = BusRdS | bus_signal = BusRdX : state;
+                                    bus_signal = DataFromCache | bus_signal = DataFromMem : modified;
+                                    TRUE : err;
+                                esac;
+                            TRUE : err;
+                        esac;
+                    TRUE : err;
+                esac;
+            proc_num != my_num : case
+                    state = invalid : state;
+                    state = shared : case
+                            bus_signal = BusRdS | bus_signal = NONE | bus_signal = DataFromMem | bus_signal = DataFromCache : state;
+                            bus_signal = BusRdX : invalid;
+                            TRUE : err;
+                        esac;
+                    state = modified : case
+                            bus_signal = NONE : state;
+                            bus_signal = BusRdS : shared;
+                            bus_signal = BusRdX : invalid;
+                            bus_signal = DataFromMem | bus_signal = DataFromCache : err;
+                            TRUE : err;
+                        esac;
+                    state = exclusive : case
+                            bus_signal = NONE : state;
+                            bus_signal = BusRdS : shared;
+                            bus_signal = BusRdX : invalid;
+                            bus_signal = DataFromMem | bus_signal = DataFromCache : err;
+                            TRUE : err;
+                        esac;
+                    state = pending : case
+                            TRUE : err;
+                        esac;
+                    TRUE : err;
+                esac;
+            TRUE : err;
+        esac;
+
+MODULE proc_controller(bus_signal, cpu1, cpu2, cpu3, cpu4)
+VAR
+    proc_num : {0, 1, 2, 3, 4, err};
+ASSIGN
+    init(proc_num) := 0;
+    next(proc_num) := case
+            proc_num = 0 : 1;
+            proc_num = 1 : case
+                    bus_signal = NONE & cpu1.state = idle : 2;
+                    bus_signal = DataFromMem | bus_signal = DataFromCache : 2;
+
+                    bus_signal = NONE & (cpu1.state = read | cpu1.state = write) : proc_num;
+                    bus_signal = BusRdS | bus_signal = BusRdX : proc_num;
+                    TRUE : err;
+                esac;
+            proc_num = 2 : case
+                    bus_signal = NONE & cpu2.state = idle : 3;
+                    bus_signal = DataFromMem | bus_signal = DataFromCache : 3;
+
+                    bus_signal = NONE & (cpu2.state = read | cpu2.state = write) : proc_num;
+                    bus_signal = BusRdS | bus_signal = BusRdX : proc_num;
+                    TRUE : err;
+                esac;
+            proc_num = 3 : case
+                    bus_signal = NONE & cpu3.state = idle : 4;
+                    bus_signal = DataFromMem | bus_signal = DataFromCache : 4;
+
+                    bus_signal = NONE & (cpu3.state = read | cpu3.state = write) : proc_num;
+                    bus_signal = BusRdS | bus_signal = BusRdX : proc_num;
+                    TRUE : err;
+                esac;
+            proc_num = 4 : case
+                    bus_signal = NONE & cpu4.state = idle : 0;
+                    bus_signal = DataFromMem | bus_signal = DataFromCache : 0;
+
+                    bus_signal = NONE & (cpu4.state = read | cpu4.state = write) : proc_num;
+                    bus_signal = BusRdS | bus_signal = BusRdX : proc_num;
+                    TRUE : err;
+                esac;
+            TRUE : err;
+        esac;
+
+MODULE bus_controller(proc_num, cpu1, cpu2, cpu3, cpu4)
+VAR
+    bus_signal : {BusRdS, BusRdX, DataFromMem, DataFromCache, NONE, err};
+ASSIGN
+    init(bus_signal) := NONE;
+
+    next(bus_signal) := case
+            bus_signal = NONE : case
+                proc_num = 0 : bus_signal;
+                proc_num = 1 : case
+                        cpu1.L1.state = modified : case
+                                cpu1.state = read | cpu1.state = write | cpu1.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu1.L1.state = shared : case
+                                cpu1.state = read | cpu1.state = idle : NONE;
+                                cpu1.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu1.L1.state = exclusive : case
+                                cpu1.state = read | cpu1.state = idle : NONE;
+                                cpu1.state = write : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu1.L1.state = invalid : case
+                                cpu1.state = read : BusRdS;
+                                cpu1.state = write : BusRdX;
+                                cpu1.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu1.L1.state = pending : err;
+                        TRUE : err;
+                    esac;
+                proc_num = 2 : case
+                        cpu2.L1.state = modified : case
+                                cpu2.state = read | cpu2.state = write | cpu2.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu2.L1.state = shared : case
+                                cpu2.state = read | cpu2.state = idle : NONE;
+                                cpu2.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu2.L1.state = exclusive : case
+                                cpu2.state = read | cpu2.state = idle : NONE;
+                                cpu2.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu2.L1.state = invalid : case
+                                cpu2.state = read : BusRdS;
+                                cpu2.state = write : BusRdX;
+                                cpu2.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu2.L1.state = pending : err;
+                        TRUE : err;
+                    esac;
+                proc_num = 3 : case
+                        cpu3.L1.state = modified : case
+                                cpu3.state = read | cpu3.state = write | cpu3.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu3.L1.state = shared : case
+                                cpu3.state = read | cpu3.state = idle : NONE;
+                                cpu3.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu3.L1.state = exclusive : case
+                                cpu3.state = read | cpu3.state = idle : NONE;
+                                cpu3.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu3.L1.state = invalid : case
+                                cpu3.state = read : BusRdS;
+                                cpu3.state = write : BusRdX;
+                                cpu3.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu3.L1.state = pending : err;
+                        TRUE : err;
+                    esac;
+                proc_num = 4 : case
+                        cpu4.L1.state = modified : case
+                                cpu4.state = read | cpu4.state = write | cpu4.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu4.L1.state = shared : case
+                                cpu4.state = read | cpu4.state = idle : NONE;
+                                cpu4.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu4.L1.state = exclusive : case
+                                cpu4.state = read | cpu4.state = idle : NONE;
+                                cpu4.state = write : BusRdX;
+                                TRUE : err;
+                            esac;
+                        cpu4.L1.state = invalid : case
+                                cpu4.state = read : BusRdS;
+                                cpu4.state = write : BusRdX;
+                                cpu4.state = idle : NONE;
+                                TRUE : err;
+                            esac;
+                        cpu4.L1.state = pending : err;
+                        TRUE : err;
+                    esac;
+                    TRUE : err;
+                esac;
+            bus_signal = BusRdS | bus_signal = BusRdX : case
+                    proc_num = 0 : err;
+
+                    proc_num = 1 : case
+                            cpu1.L1.state = modified : case
+                                    cpu1.state = read | cpu1.state = write | cpu1.state = idle : NONE;
+                                    TRUE : err;
+                                esac;
+                            cpu1.L1.state = shared : case
+                                    cpu1.state = read | cpu1.state = idle : err;
+                                    cpu1.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu2.L1.state = modified | cpu3.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu2.L1.state = shared | cpu3.L1.state = shared | cpu4.L1.state = shared) |
+                                            (cpu2.L1.state = exclusive | cpu3.L1.state = exclusive | cpu4.L1.state = exclusive) : DataFromCache;
+
+                                            bus_signal = BusRdX & 
+                                            (cpu2.L1.state != modified) & (cpu3.L1.state != modified) & (cpu4.L1.state != modified) &
+                                            (cpu2.L1.state != shared) & (cpu3.L1.state != shared) & (cpu4.L1.state != shared) &
+                                            (cpu2.L1.state != exclusive) & (cpu3.L1.state != exclusive) & (cpu4.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu1.L1.state = exclusive : case
+                                    cpu1.state = read | cpu1.state = idle : err;
+                                    cpu1.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu2.L1.state = modified | cpu3.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu2.L1.state = shared | cpu3.L1.state = shared | cpu4.L1.state = shared) |
+                                            (cpu2.L1.state = exclusive | cpu3.L1.state = exclusive | cpu4.L1.state = exclusive) : DataFromCache;
+                                            
+                                            bus_signal = BusRdX & 
+                                            (cpu2.L1.state != modified) & (cpu3.L1.state != modified) & (cpu4.L1.state != modified) &
+                                            (cpu2.L1.state != shared) & (cpu3.L1.state != shared) & (cpu4.L1.state != shared) &
+                                            (cpu2.L1.state != exclusive) & (cpu3.L1.state != exclusive) & (cpu4.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu1.L1.state = invalid : case
+                                    cpu1.state = read | cpu1.state = idle | cpu1.state = write : err;
+                                    TRUE : err;
+                                esac;
+                            cpu1.L1.state = pending : case
+                                    cpu1.state = read | cpu1.state = write : case
+                                            (cpu2.L1.state = modified | cpu3.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu2.L1.state = exclusive | cpu3.L1.state = exclusive | cpu4.L1.state = exclusive) |
+                                            (cpu2.L1.state = shared | cpu3.L1.state = shared | cpu4.L1.state = shared) : DataFromCache;
+
+                                            -- DataFromMem condition.
+                                            cpu2.L1.state != exclusive & cpu3.L1.state != exclusive & cpu4.L1.state != exclusive &
+                                            cpu2.L1.state != shared & cpu3.L1.state != shared & cpu4.L1.state != shared &
+                                            cpu2.L1.state != modified & cpu3.L1.state != modified & cpu4.L1.state != modified : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    cpu1.state = idle : err;
+                                    TRUE : err;
+                                esac;
+                            TRUE : err;
+                        esac;
+
+                    proc_num = 2 : case
+                            cpu2.L1.state = modified : case
+                                    cpu2.state = read | cpu2.state = write | cpu2.state = idle : NONE;
+                                    TRUE : err;
+                                esac;
+                            cpu2.L1.state = shared : case
+                                    cpu2.state = read | cpu2.state = idle : err;
+                                    cpu2.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state = modified | cpu3.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu1.L1.state = shared | cpu3.L1.state = shared | cpu4.L1.state = shared) |
+                                            (cpu1.L1.state = exclusive | cpu3.L1.state = exclusive | cpu4.L1.state = exclusive) : DataFromCache;
+
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state != modified) & (cpu3.L1.state != modified) & (cpu4.L1.state != modified) &
+                                            (cpu1.L1.state != shared) & (cpu3.L1.state != shared) & (cpu4.L1.state != shared) &
+                                            (cpu1.L1.state != exclusive) & (cpu3.L1.state != exclusive) & (cpu4.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu2.L1.state = exclusive : case
+                                    cpu2.state = read | cpu2.state = idle : err;
+                                    cpu2.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state = modified | cpu3.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu1.L1.state = shared | cpu3.L1.state = shared | cpu4.L1.state = shared) |
+                                            (cpu1.L1.state = exclusive | cpu3.L1.state = exclusive | cpu4.L1.state = exclusive) : DataFromCache;
+                                            
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state != modified) & (cpu3.L1.state != modified) & (cpu4.L1.state != modified) &
+                                            (cpu1.L1.state != shared) & (cpu3.L1.state != shared) & (cpu4.L1.state != shared) &
+                                            (cpu1.L1.state != exclusive) & (cpu3.L1.state != exclusive) & (cpu4.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu2.L1.state = invalid : case
+                                    cpu2.state = read | cpu2.state = idle | cpu2.state = write : err;
+                                    TRUE : err;
+                                esac;
+                            cpu2.L1.state = pending : case
+                                    cpu2.state = read | cpu2.state = write : case
+                                            (cpu1.L1.state = modified | cpu3.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu1.L1.state = exclusive | cpu3.L1.state = exclusive | cpu4.L1.state = exclusive) |
+                                            (cpu1.L1.state = shared | cpu3.L1.state = shared | cpu4.L1.state = shared) : DataFromCache;
+
+                                            -- DataFromMem condition.
+                                            cpu1.L1.state != exclusive & cpu3.L1.state != exclusive & cpu4.L1.state != exclusive &
+                                            cpu1.L1.state != shared & cpu3.L1.state != shared & cpu4.L1.state != shared &
+                                            cpu1.L1.state != modified & cpu3.L1.state != modified & cpu4.L1.state != modified : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    cpu2.state = idle : err;
+                                    TRUE : err;
+                                esac;
+                            TRUE : err;
+                        esac;
+
+                    proc_num = 3 : case
+                            cpu3.L1.state = modified : case
+                                    cpu3.state = read | cpu3.state = write | cpu3.state = idle : NONE;
+                                    TRUE : err;
+                                esac;
+                            cpu3.L1.state = shared : case
+                                    cpu3.state = read | cpu3.state = idle : err;
+                                    cpu3.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state = modified | cpu2.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu1.L1.state = shared | cpu2.L1.state = shared | cpu4.L1.state = shared) |
+                                            (cpu1.L1.state = exclusive | cpu2.L1.state = exclusive | cpu4.L1.state = exclusive) : DataFromCache;
+
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state != modified) & (cpu2.L1.state != modified) & (cpu4.L1.state != modified) &
+                                            (cpu1.L1.state != shared) & (cpu2.L1.state != shared) & (cpu4.L1.state != shared) &
+                                            (cpu1.L1.state != exclusive) & (cpu2.L1.state != exclusive) & (cpu4.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu3.L1.state = exclusive : case
+                                    cpu3.state = read | cpu3.state = idle : err;
+                                    cpu3.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state = modified | cpu2.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu1.L1.state = shared | cpu2.L1.state = shared | cpu4.L1.state = shared) |
+                                            (cpu1.L1.state = exclusive | cpu2.L1.state = exclusive | cpu4.L1.state = exclusive) : DataFromCache;
+                                            
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state != modified) & (cpu2.L1.state != modified) & (cpu4.L1.state != modified) &
+                                            (cpu1.L1.state != shared) & (cpu2.L1.state != shared) & (cpu4.L1.state != shared) &
+                                            (cpu1.L1.state != exclusive) & (cpu2.L1.state != exclusive) & (cpu4.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu3.L1.state = invalid : case
+                                    cpu3.state = read | cpu3.state = idle | cpu3.state = write : err;
+                                    TRUE : err;
+                                esac;
+                            cpu3.L1.state = pending : case
+                                    cpu3.state = read | cpu3.state = write : case
+                                            (cpu1.L1.state = modified | cpu2.L1.state = modified | cpu4.L1.state = modified) |
+                                            (cpu1.L1.state = exclusive | cpu2.L1.state = exclusive | cpu4.L1.state = exclusive) |
+                                            (cpu1.L1.state = shared | cpu2.L1.state = shared | cpu4.L1.state = shared) : DataFromCache;
+
+                                            -- DataFromMem condition.
+                                            cpu1.L1.state != exclusive & cpu2.L1.state != exclusive & cpu4.L1.state != exclusive &
+                                            cpu1.L1.state != shared & cpu2.L1.state != shared & cpu4.L1.state != shared &
+                                            cpu1.L1.state != modified & cpu2.L1.state != modified & cpu4.L1.state != modified : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    cpu3.state = idle : err;
+                                    TRUE : err;
+                                esac;
+                            TRUE : err;
+                        esac;          
+
+                    proc_num = 4 : case
+                            cpu4.L1.state = modified : case
+                                    cpu4.state = read | cpu4.state = write | cpu4.state = idle : NONE;
+                                    TRUE : err;
+                                esac;
+                            cpu4.L1.state = shared : case
+                                    cpu4.state = read | cpu4.state = idle : err;
+                                    cpu4.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state = modified | cpu2.L1.state = modified | cpu3.L1.state = modified) |
+                                            (cpu1.L1.state = shared | cpu2.L1.state = shared | cpu3.L1.state = shared) |
+                                            (cpu1.L1.state = exclusive | cpu2.L1.state = exclusive | cpu3.L1.state = exclusive) : DataFromCache;
+
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state != modified) & (cpu2.L1.state != modified) & (cpu3.L1.state != modified) &
+                                            (cpu1.L1.state != shared) & (cpu2.L1.state != shared) & (cpu3.L1.state != shared) &
+                                            (cpu1.L1.state != exclusive) & (cpu2.L1.state != exclusive) & (cpu3.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu4.L1.state = exclusive : case
+                                    cpu4.state = read | cpu4.state = idle : err;
+                                    cpu4.state = write : case
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state = modified | cpu2.L1.state = modified | cpu3.L1.state = modified) |
+                                            (cpu1.L1.state = shared | cpu2.L1.state = shared | cpu3.L1.state = shared) |
+                                            (cpu1.L1.state = exclusive | cpu2.L1.state = exclusive | cpu3.L1.state = exclusive) : DataFromCache;
+                                            
+                                            bus_signal = BusRdX & 
+                                            (cpu1.L1.state != modified) & (cpu2.L1.state != modified) & (cpu3.L1.state != modified) &
+                                            (cpu1.L1.state != shared) & (cpu2.L1.state != shared) & (cpu3.L1.state != shared) &
+                                            (cpu1.L1.state != exclusive) & (cpu2.L1.state != exclusive) & (cpu3.L1.state != exclusive) : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    TRUE : err;
+                                esac;
+                            cpu4.L1.state = invalid : case
+                                    cpu4.state = read | cpu4.state = idle | cpu4.state = write : err;
+                                    TRUE : err;
+                                esac;
+                            cpu4.L1.state = pending : case
+                                    cpu4.state = read | cpu4.state = write : case
+                                            (cpu1.L1.state = modified | cpu2.L1.state = modified | cpu3.L1.state = modified) |
+                                            (cpu1.L1.state = exclusive | cpu2.L1.state = exclusive | cpu3.L1.state = exclusive) |
+                                            (cpu1.L1.state = shared | cpu2.L1.state = shared | cpu3.L1.state = shared) : DataFromCache;
+
+                                            -- DataFromMem condition.
+                                            cpu1.L1.state != exclusive & cpu2.L1.state != exclusive & cpu3.L1.state != exclusive &
+                                            cpu1.L1.state != shared & cpu2.L1.state != shared & cpu3.L1.state != shared &
+                                            cpu1.L1.state != modified & cpu2.L1.state != modified & cpu3.L1.state != modified : DataFromMem;
+                                            TRUE :err;
+                                        esac;
+                                    cpu4.state = idle : err;
+                                    TRUE : err;
+                                esac;
+                            TRUE : err;
+                        esac;
+                    
+                    TRUE : err;
+                esac;
+            bus_signal = DataFromMem | bus_signal = DataFromCache : NONE;
+            TRUE : err;
+        esac;
+
+MODULE main
+	VAR
+		pc : proc_controller(bus.bus_signal, cpu1, cpu2, cpu3, cpu4);
+		bus : bus_controller(pc.proc_num, cpu1, cpu2, cpu3, cpu4);
+		cpu1 : cpu(bus.bus_signal, pc.proc_num, 1);
+		cpu2 : cpu(bus.bus_signal, pc.proc_num, 2);
+		cpu3 : cpu(bus.bus_signal, pc.proc_num, 3);
+		cpu4 : cpu(bus.bus_signal, pc.proc_num, 4);
+
+
+-- modified condition.
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu3.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = modified & cpu3.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = modified & cpu4.L1.state = modified); 
+
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified & cpu3.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu3.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = modified & cpu3.L1.state = modified & cpu4.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified & cpu3.L1.state = modified & cpu4.L1.state = modified);
+
+-- exclusive condition.
+SPEC AG ! (cpu1.L1.state = exclusive & cpu2.L1.state = exclusive);
+SPEC AG ! (cpu1.L1.state = exclusive & cpu3.L1.state = exclusive);
+SPEC AG ! (cpu1.L1.state = exclusive & cpu4.L1.state = exclusive);
+SPEC AG ! (cpu2.L1.state = exclusive & cpu3.L1.state = exclusive);
+SPEC AG ! (cpu2.L1.state = exclusive & cpu4.L1.state = exclusive);
+SPEC AG ! (cpu3.L1.state = exclusive & cpu4.L1.state = exclusive);
+
+SPEC AG ! (cpu1.L1.state = exclusive & cpu2.L1.state = exclusive & cpu3.L1.state = exclusive);
+SPEC AG ! (cpu1.L1.state = exclusive & cpu2.L1.state = exclusive & cpu4.L1.state = exclusive);
+SPEC AG ! (cpu1.L1.state = exclusive & cpu3.L1.state = exclusive & cpu4.L1.state = exclusive);
+SPEC AG ! (cpu2.L1.state = exclusive & cpu3.L1.state = exclusive & cpu4.L1.state = exclusive);
+
+SPEC AG ! (cpu1.L1.state = exclusive & cpu2.L1.state = exclusive & cpu3.L1.state = exclusive & cpu4.L1.state = exclusive);
+
+SPEC AG ! (cpu1.L1.state = exclusive & cpu2.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = exclusive & cpu1.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = exclusive & cpu3.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = exclusive & cpu1.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = exclusive & cpu4.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = exclusive & cpu1.L1.state = modified);
+
+SPEC AG ! (cpu2.L1.state = exclusive & cpu3.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = exclusive & cpu2.L1.state = modified);
+
+SPEC AG ! (cpu2.L1.state = exclusive & cpu4.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = exclusive & cpu2.L1.state = modified);
+
+SPEC AG ! (cpu3.L1.state = exclusive & cpu4.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = exclusive & cpu3.L1.state = modified);
+
+-- shared condition.
+SPEC AG ! (cpu1.L1.state = shared & cpu2.L1.state = shared & cpu3.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu2.L1.state = shared & cpu3.L1.state = modified & cpu4.L1.state = shared);
+SPEC AG ! (cpu1.L1.state = shared & cpu2.L1.state = modified & cpu3.L1.state = shared & cpu4.L1.state = shared);
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = shared & cpu3.L1.state = shared & cpu4.L1.state = shared);
+
+SPEC AG ! (cpu1.L1.state = shared & cpu2.L1.state = shared & cpu3.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu2.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu3.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu3.L1.state = shared & cpu2.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu3.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu4.L1.state = shared & cpu2.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = shared & cpu4.L1.state = shared & cpu3.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = shared & cpu3.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = shared & cpu3.L1.state = shared & cpu1.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = shared & cpu4.L1.state = shared & cpu3.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = shared & cpu4.L1.state = shared & cpu1.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = shared & cpu4.L1.state = shared & cpu1.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = shared & cpu4.L1.state = shared & cpu2.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = shared & cpu2.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = shared & cpu1.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = shared & cpu3.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = shared & cpu1.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = shared & cpu1.L1.state = modified);
+
+SPEC AG ! (cpu3.L1.state = shared & cpu2.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = shared & cpu3.L1.state = modified);
+
+SPEC AG ! (cpu2.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = shared & cpu2.L1.state = modified);
+
+SPEC AG ! (cpu3.L1.state = shared & cpu4.L1.state = modified);
+SPEC AG ! (cpu4.L1.state = shared & cpu3.L1.state = modified);
+
+-- error condition.
+SPEC AG ! (cpu1.L1.state = err);
+SPEC AG ! (cpu2.L1.state = err);
+SPEC AG ! (cpu3.L1.state = err);
+SPEC AG ! (cpu4.L1.state = err);
+
+SPEC AG ! (cpu1.state = err);
+SPEC AG ! (cpu2.state = err);
+SPEC AG ! (cpu3.state = err);
+SPEC AG ! (cpu4.state = err);
+
+SPEC AG ! (bus.bus_signal = err);
+
+SPEC AG ! (pc.proc_num = err);
+
+-- guarantee condition.
+SPEC AF (cpu1.state = read -> (cpu1.L1.state = shared | cpu1.L1.state = exclusive));
+SPEC AF (cpu2.state = read -> (cpu2.L1.state = shared | cpu2.L1.state = exclusive));
+SPEC AF (cpu3.state = read -> (cpu3.L1.state = shared | cpu3.L1.state = exclusive));
+SPEC AF (cpu4.state = read -> (cpu4.L1.state = shared | cpu4.L1.state = exclusive));
+
+SPEC AF (cpu1.state = write -> cpu1.L1.state = modified);
+SPEC AF (cpu2.state = write -> cpu2.L1.state = modified);
+SPEC AF (cpu3.state = write -> cpu3.L1.state = modified);
+SPEC AF (cpu4.state = write -> cpu4.L1.state = modified);
+
+SPEC AF (cpu1.state = read & cpu2.state = read -> cpu1.L1.state = shared & cpu2.L1.state = shared);
+SPEC AF (cpu1.state = read & cpu3.state = read -> cpu1.L1.state = shared & cpu3.L1.state = shared);
+SPEC AF (cpu1.state = read & cpu4.state = read -> cpu1.L1.state = shared & cpu4.L1.state = shared);
+
+SPEC AF (cpu2.state = read & cpu3.state = read -> cpu2.L1.state = shared & cpu3.L1.state = shared);
+SPEC AF (cpu2.state = read & cpu4.state = read -> cpu2.L1.state = shared & cpu4.L1.state = shared);
+
+SPEC AF (cpu3.state = read & cpu4.state = read -> cpu3.L1.state = shared & cpu4.L1.state = shared);
+
+SPEC AF (cpu1.state = write & cpu2.state = write -> cpu1.L1.state = modified & cpu2.L1.state = invalid | cpu1.L1.state = invalid & cpu2.L1.state = modified);
+

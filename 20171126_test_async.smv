@@ -1,0 +1,51 @@
+-- fairness means that there's possibility of selecting module 1 or module 2 more than once at a time.
+-- that's not what I want.
+-- I want the situation that when c = 1, then run cpu1 once and set c to 0.
+-- I shouldn't use process. because there's possibility that
+-- the control flow stops in one module. I don't want that.
+-- I want the program to check all the module in each state, not looping in one module.
+-- If I delete process, then there should be only one assignment statement
+-- for one variable.
+
+-- You need to put async intentionally, not just putting a variable value with nondeterminism.
+-- because it might cause unfair situation.
+-- then, how could I deal with selector? -> increasing pattern, so it would be assigned fairly.
+-- for example, 0 : 1, 1 : 2, 2 : 3, 3 : 4, 4 : 5, ...
+
+-- but, it doesn't matter if it's process and fairness,
+-- because every var val is tightly connected.
+-- but, it doesn't matter if in one state, every cpus are not checked.
+
+
+MODULE module1(a, b, c)
+ASSIGN
+    next(b) := case
+            c = 1 & b < 5 : b + 1;
+            TRUE : b;
+        esac;
+
+MODULE module2(a, b, c)
+ASSIGN
+    next(a) := case
+            c = 0 & a < 5 : a + 1;
+            TRUE : a;
+        esac;
+
+MODULE main
+VAR
+    a : 1 .. 5;
+    b : 1 .. 5;
+    c : {0, 1};
+    cpu1 : module1(a, b, c);
+    cpu2 : module2(a, b, c);
+ASSIGN
+    init(a) := 1;
+    init(b) := 1;
+    init(c) := 0;
+    next(c) := case
+            c = 0 : 1;
+            c = 1 : 0;
+        esac;
+
+SPEC AF (a = 5 & b = 5);
+

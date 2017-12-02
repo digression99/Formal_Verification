@@ -1,0 +1,68 @@
+MODULE cache(my_sig, proc_sig, bus_sig)
+VAR
+	state : {modified, exclusive, shared, invalid, pending};
+ASSIGN
+	init(state) := invalid;
+	next(state) := case
+				state = invalid := case
+							--
+						esac;
+				state = shared := case
+						esac;
+				state = exclusive := case
+						esac;
+				state = modified := case
+						esac;
+				state = pending := case
+						esac;
+
+MODULE cpu(my_sig, proc_sig)
+VAR
+	prev_state = {req, idle};
+	state : {req, idle};
+ASSIGN
+	init(prev_state) := idle;
+	init(state) := idle;
+	next(state) := case
+				state = req : state;
+				state = idle : {req, idle};
+				TRUE : state;
+			esac;
+	next(prev_state) := case
+				--
+
+			esac;
+
+MODULE proc_controller(signal, cpu1_state, cpu2_state, cpu3_state, cpu4_state)
+ASSIGN
+	next(signal) := case
+				signal = 0 : {1, 2, 3, 4};
+				signal = 1 || signal = 2 || signal = 3 || signal = 4 := case
+							signal = 1 && cpu1_state = req : signal;
+							signal = 1 && cpu1_state = idle : {1, 2, 3, 4};
+							signal = 2 && cpu2_state = req : signal;
+							signal = 2 && cpu2_state = idle : {1, 2, 3, 4};
+							signal = 3 && cpu3_state = req : signal;
+							signal = 3 && cpu3_state = idle : {1, 2, 3, 4};
+							signal = 4 && cpu4_state = req : signal;
+							signal = 4 && cpu4_state = idle : {1, 2, 3, 4};
+					esac;
+				esac;
+
+MODULE bus_controller(proc_signal, bus_signal)
+
+
+MODULE main
+VAR
+	proc_signal : {0, 1, 2, 3, 4};
+	bus_signal : { WORKING, NONE, PROC_READ, PROC_WRITE, PROC_READ_X  };
+	cpu1 : cpu(1, proc_signal);
+	cpu2 : cpu(2, proc_signal);
+	cpu3 : cpu(3, proc_signal);
+	cpu4 : cpu(4, proc_signal);
+	proc_cont : proc_controller(proc_signal, cpu1.state, cpu2.state, cpu3.state, cpu4.state);
+	bus_cont : bus_controller();
+
+ASSIGN
+	init(proc_signal) := 0;
+				

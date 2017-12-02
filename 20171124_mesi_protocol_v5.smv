@@ -1,0 +1,267 @@
+--
+-- 20171124 updates
+--
+-- *    deleted bus status.
+-- *    added more cpu state(former cpu status) change.
+-- *    added data_transfer in bus_controller.
+-- *    in cpu, saved_status(former saved_state) earned more transition.
+-- *    proc_num : check only bus_signal.
+-- *    if cpu action is read or write and cache state is modified or shared or exclusive, then 
+--      you should not send some messages to the bus.
+-- *    what happens if cpu state is write and cache state is shared? -> send flush message.
+--      this is automatically happen with proc_num and my_num. but you'll need it, so just take your time.
+-- *    removed cpu state check in bus controller and moved inside cpu.
+-- *    need to check if DataFromCache or DataFromMem is for modified or shared or exclusive.
+--      -> need to change bus signal or use saved_state?
+--      -> or specify the pending state 
+--      -> or keep the cpu state to read or write, not changing it to pendng.
+
+MODULE cpu(bus_signal, proc_num, my_num)
+VAR
+    state : {idle, read, write, locked, err};
+    saved_state : {read, write, idle, err};
+    L1 : cache(state, bus_signal, proc_num, my_num);
+ASSIGN
+    init(state) := idle;
+    init(saved_state) := idle;
+    next(state) := case
+            state = idle : {idle, read, write};
+            state = read | state = write : case
+                    proc_num = 0 : state;
+                    proc_num = my_num : state;
+                    proc_num != my_num : locked;
+                    TRUE : err;
+                esac;
+            -- state = pending : case
+            --        proc_num = my_num : case
+            --                bus_signal = DataFromCache | bus_signal = DataFromMem : idle;
+            --                bus_signal = BusRdS | bus_signal = BusRdX : state;
+            --                TRUE : err;
+            --            esac;
+            --        TRUE : err;
+            --    esac;
+            state = locked : case
+                    proc_num = my_num : case
+                            bus_signal = NONE : saved_state;
+                            bus_signal != NONE : state;
+                            TRUE : err;
+                        esac;
+                    TRUE : err;
+                esac;
+            TRUE : err;
+        esac;
+    next(saved_state) := case
+            -- state = idle | state = locked | state = pending : saved_state;
+            state = idle | state = locked : saved_state;
+            (state = read | state = write) & (proc_num != my_num) : state;
+            bus_signal != NONE : saved_state;
+            bus_signal = NONE : idle;
+            TRUE : err;
+        esac;
+    next(bus_signal) := case
+            proc_num = my_num : case
+                    bus_signal = DataFromCache | bus_signal = DataFromMem : NONE;
+                    state = read : case
+                            L1.state = modified | L1.state = shared | L1.state = exclusive : NONE;
+                            L1.state = invalid : BusRdS;
+                            L1.state = pending : bus_signal;
+                            TRUE : err;
+                        esac;
+                    state = write : case
+                            L1.state = modified : NONE;
+                            L1.state = exclusive : NONE;
+                            L1.state = shared | L1.state = invalid : BusRdX;
+                            TRUE : err;
+                        esac;
+                    -- state = pending : bus_signal;
+                    state = idle : NONE;
+                    state = locked : bus_signal;
+                    TRUE : err;
+                esac;
+            proc_num != my_num : case
+                    (bus_signal = BusRdS | bus_signal = BusRdX) & (L1.state = modified | L1.state = exclusive | L1.state = shared) : DataFromCache;
+                    -- (bus_signal = BusRdS | bus_signal = BusRdX) & (L1.state = invalid | L1.state = pending) : bus_signal;
+                    (bus_signal = BusRdS | bus_signal = BusRdX) & (L1.state = invalid) : bus_signal;
+                    -- (bus_signal = NONE | bus_signal = DataFromCache | bus_signal = DataFromMem) & (L1.state = invalid | L1.state = pending) : bus_signal;
+                    (bus_signal = NONE | bus_signal = DataFromCache | bus_signal = DataFromMem) & L1.state = invalid : bus_signal;
+                    TRUE : err;
+                esac;
+            TRUE : err;
+        esac;
+
+MODULE cache(cpu_state, bus_signal, proc_num, my_num)
+VAR
+    state : {modified, exclusive, shared, invalid, pending, err};
+ASSIGN
+    init(state) := invalid;
+    next(state) := case
+            proc_num = 0 : state;
+            proc_num = my_num : case
+                    state = modified : case
+                            -- if cpu is read or write, then don't do anything.
+                            cpu_state = read | cpu_state = write | cpu_state = idle: state;
+                            cpu_state = locked : state;
+                            -- error case : cpu_state = pending : state;
+                            TRUE : err;
+                        esac;
+                    state = exclusive : case
+                            cpu_state = write : modified;
+                            cpu_state = read | cpu_state = idle | cpu_state = locked : state;
+                            -- error case : cpu_state = pending;
+                            TRUE : err;
+                        esac;
+                    state = shared : case
+                            cpu_state = read | cpu_state = idle | cpu_state = locked : state;
+                            cpu_state = write : modified;
+                            -- error case : cpu_state = pending;
+                            TRUE : err;
+                        esac;
+                    state = invalid : case
+                            cpu_state = read | cpu_state = write : pending;
+                            cpu_state = idle | cpu_state = locked : state;
+                            -- cpu_state = pending : state;
+                            TRUE : err;
+                        esac;
+                    state = pending : case
+                            bus_signal = DataFromCache & cpu_state = read : shared;
+                            bus_signal = DataFromMem & cpu_state = read : exclusive;
+                            (bus_signal = DataFromCache | bus_signal = DataFromMem) & cpu_state = write : modified;
+                            bus_signal = BusRdS | bus_signal = BusRdX : state;
+
+                            -- cpu_state = pending : case
+                            --         -- bus_signal = DataFromCache : shared;
+                            --        -- bus_signal = DataFromMem : exclusive;
+                            --        -- you need to specify whether it is modified or shared or exclusive.
+                            --        bus_signal = DataFromCache & cpu_state = read : shared;
+                            --        bus_signal = DataFromMem & cpu_state = read : exclusive;
+                            --        (bus_signal = DataFromCache | bus_signal = DataFromMem) & cpu_state = write : modified;
+                            --        bus_signal = BusRdS | bus_signal = BusRdX : state;
+                            --        TRUE : err;
+                            --    esac;
+                            TRUE : err;
+                        esac;
+                    TRUE : err;
+                esac;
+            proc_num != my_num : case
+                    state = modified : case
+                            bus_signal = BusRdS : shared;
+                            bus_signal = BusRdX : invalid;
+                            bus_signal = NONE | bus_signal = DataFromMem | bus_signal = DataFromCache : state;
+                            TRUE : err;
+                        esac;
+                    state = exclusive : case
+                            bus_signal = BusRdS | bus_signal = NONE | bus_signal = DataFromMem | bus_signal = DataFromCache : state;
+							bus_signal = BusRdX : invalid;
+                            TRUE : err;
+                        esac;
+                    state = shared : case
+                            bus_signal = BusRdS | bus_signal = NONE | bus_signal = DataFromMem | bus_signal = DataFromCache : state;
+                            bus_signal = BusRdX : invalid;
+                            TRUE : err;
+                        esac;
+                    state = invalid : case
+                            bus_signal = BusRdS | bus_signal = BusRdX | bus_signal = NONE | bus_signal = DataFromMem | bus_signal = DataFromCache : state;
+                            TRUE : err;
+                        esac;
+                    state = pending : case
+                            TRUE : err;
+                        esac;
+                    TRUE : err;
+                esac;
+            
+            TRUE : err;
+        esac;
+
+MODULE proc_controller(bus_signal)
+VAR
+    proc_num : {0, 1, 2, 3, 4, err};
+ASSIGN
+    init(proc_num) := 0;
+    next(proc_num) := case
+            proc_num != 0 : case
+                    bus_signal = BusRdS | bus_signal = BusRdX | bus_signal = DataFromMem | bus_signal = DataFromCache : proc_num;
+                    bus_signal = NONE : 0;
+                    TRUE : err;
+                esac;
+            proc_num = 0 : case
+                    bus_signal = NONE : {1, 2, 3, 4};
+                    TRUE : err;
+                esac;
+        esac;
+
+MODULE bus_controller(proc_num)
+VAR
+    bus_signal : {BusRdS, BusRdX, DataFromMem, DataFromCache, NONE, err};
+    data_transfer : {TRANSFER, NONE, err};
+ASSIGN
+    init(bus_signal) := NONE;
+    init(data_transfer) := NONE;
+
+    next(bus_signal) := case
+            bus_signal = DataFromMem | bus_signal = DataFromCache : NONE;
+            data_transfer = TRANSFER & (bus_signal = BusRdS | bus_signal = BusRdX) : DataFromMem;
+            data_transfer = TRANSFER & bus_signal = DataFromCache : bus_signal;
+            data_transfer = NONE & (bus_signal = NONE | bus_signal = BusRdS | bus_signal = BusRdX | bus_signal = NONE) : bus_signal;
+            -- data_transfer = NONE & (bus_signal = BusRdS | bus_signal)
+            TRUE : err;
+        esac;
+    next(data_transfer) := case
+            data_transfer = TRANSFER : NONE;
+            data_transfer = NONE & (bus_signal = BusRdS | bus_signal = BusRdX) : TRANSFER;
+            data_transfer = NONE & bus_signal = NONE : data_transfer;
+            TRUE : err;
+        esac;
+
+MODULE main
+	VAR
+		pc : proc_controller(bus.bus_signal);
+		bus : bus_controller(pc.proc_num);
+		cpu1 : process cpu(bus.bus_signal, pc.proc_num, 1);
+		cpu2 : process cpu(bus.bus_signal, pc.proc_num, 2);
+		cpu3 : process cpu(bus.bus_signal, pc.proc_num, 3);
+		cpu4 : process cpu(bus.bus_signal, pc.proc_num, 4);
+
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu3.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = modified & cpu3.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu3.L1.state = modified & cpu4.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified & cpu3.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu1.L1.state = modified & cpu3.L1.state = modified & cpu4.L1.state = modified);
+SPEC AG ! (cpu2.L1.state = modified & cpu3.L1.state = modified & cpu4.L1.state = modified);
+
+SPEC AG ! (cpu1.L1.state = modified & cpu2.L1.state = modified & cpu3.L1.state = modified & cpu4.L1.state = modified);
+
+-- error condition.
+SPEC AG ! (cpu1.L1.state = err);
+-- SPEC AG ! (cpu2.L1.state = err);
+-- SPEC AG ! (cpu3.L1.state = err);
+-- SPEC AG ! (cpu4.L1.state = err);
+
+-- SPEC AG ! (cpu1.state = err);
+-- SPEC AG ! (cpu2.state = err);
+-- SPEC AG ! (cpu3.state = err);
+-- SPEC AG ! (cpu4.state = err);
+
+-- SPEC AG ! (cpu1.saved_state = err);
+-- SPEC AG ! (cpu2.saved_state = err);
+-- SPEC AG ! (cpu3.saved_state = err);
+-- SPEC AG ! (cpu4.saved_state = err);
+
+-- SPEC AG ! (bus.bus_signal = err);
+
+-- SPEC AG ! (pc.proc_num = err);
+
+-- guarantee condition.
+SPEC AF (cpu1.state = read -> (cpu1.L1.state = shared | cpu1.L1.state = exclusive));
+SPEC AF (cpu2.state = read -> (cpu2.L1.state = shared | cpu2.L1.state = exclusive));
+SPEC AF (cpu3.state = read -> (cpu3.L1.state = shared | cpu3.L1.state = exclusive));
+SPEC AF (cpu4.state = read -> (cpu4.L1.state = shared | cpu4.L1.state = exclusive));
+
+SPEC AF (cpu1.state = write -> cpu1.L1.state = modified);
+SPEC AF (cpu2.state = write -> cpu2.L1.state = modified);
+SPEC AF (cpu3.state = write -> cpu3.L1.state = modified);
+SPEC AF (cpu4.state = write -> cpu4.L1.state = modified);

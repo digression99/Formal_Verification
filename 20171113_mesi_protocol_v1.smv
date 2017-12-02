@@ -1,0 +1,197 @@
+MODULE cpu(bus_signal, proc_num, my_num)
+VAR
+		status : {idle, read, write, locked, pending};
+		saved_status : {read, write, idle};
+		L1 : cache(bus_signal, proc_num, my_num);
+ASSIGN
+		init(status) := idle;
+		init(saved_status) := idle;
+
+		next(status) := case
+				status = idle : {read, write, idle};
+				status = read | status = write := case
+						proc_num = my_num : pending;
+						proc_num != my_num : locked;
+						TRUE : status;
+					esac;
+				status = locked := case
+						bus_signal = DONE : saved_state;
+						bus_signal = WORKING : status;
+						TRUE : status;
+					esac;
+				status = pending : IDLE;
+				TRUE : status;
+			esac;
+			
+		next(saved_status) := case
+				(status = read | status = write) & my_num != proc_num : status;
+				bus_signal = DONE : IDLE;
+			esac;
+
+MODULE cache(bus_signal, proc_num, my_num)
+	VAR
+		state : {M, E, S, I, P};
+	ASSIGN
+		init(state) := I;
+		next(state) := case
+				proc_num = my_num := case
+						state = P := case
+								bus_signal = DataFromCache : S;
+								bus_signal = DataFromMem : E;
+								TRUE : state;
+							esac;
+						state = I := case
+								bus_signal = BusRdX : P;
+								bus_signal = BusRdS : P;
+								TRUE : state;
+							esac;
+						state = E := case
+								bus_signal = BusRdX : M;
+								bus_signal = BusRdS : state;
+								TRUE : state;
+							esac;
+						state = S := case
+								bus_signal = BusRdX : M;
+								bus_signal = BusRdS : state;
+								TRUE : state;
+							esac;
+						state = M := case
+								bus_signal = BusRdX | bus_signal = BusRdS : state;
+								TRUE : state;
+							esac;
+						TRUE : state;
+					esac;
+				proc_num != my_num := case
+						state = I := case
+								bus_signal = BusRdS | bus_signal = BusRdX : state;
+								TRUE : state;
+							esac;
+						state = E := case
+								bus_signal = BusRdS : state;
+								bus_signal = BusRdX : I;
+								TRUE : state;
+							esac;
+						state = S := case
+								bus_signal = BusRdS : state;
+								bus_signal = BusRdX : I;
+								TRUE : state;
+							esac;
+						state = M := case
+								bus_signal = BusRdS : S;
+								bus_signal = BusRdX : I;
+							esac;
+						TRUE : state;
+					esac;
+		next(bus_signal) := case
+				proc_num != my_num & state = M : DataFromCache;
+				TRUE : bus_signal;
+			esac;
+
+MODULE proc_controller(bus_status)
+	VAR
+		proc_num : {0, 1, 2, 3, 4};
+	ASSIGN
+		init(proc_num) := 0;
+		next(proc_num) := case
+				proc_num != 0 := case
+						bus_status = WORKING : proc_num;
+						bus_state = DONE : 0;
+						TRUE : proc_num;
+					esac;
+				proc_num = 0 := case
+						bus_status = DONE : {1, 2, 3, 4};
+						TRUE : proc_num;
+					esac;
+			esac;
+
+MODULE bus_controller(proc_num, cpu1_status, cpu2_status, cpu3_status, cpu4_status)
+	VAR
+		bus_status : {WORKING, DONE};
+		bus_signal : {BusRdS, BusRdX, DataFromMem, DataFromCache, NONE};
+
+	ASSIGN
+		init(bus_status) := DONE;
+		init(bus_signal) := NONE;
+
+		next(bus_signal) := case
+				proc_num = 0 : NONE;
+				proc_num = 1 := case
+						cpu1_status = READ : BusRdS;
+						cpu1_status = WRITE : BusRdX;
+						cpu1_status = PENDING : NONE;
+						cpu1_status = IDLE : NONE;
+						cpu1_status = LOCKED : bus_signal;
+						TRUE : bus_signal;
+					esac;
+				proc_num = 2 := case
+						cpu2_status = READ : BusRdS;
+						cpu2_status = WRITE : BusRdX;
+						cpu2_status = PENDING : NONE;
+						cpu2_status = IDLE : NONE;
+						cpu2_status = LOCKED : bus_signal;
+						TRUE : bus_signal;
+					esac;
+				proc_num = 3 := case
+						cpu3_status = READ : BusRdS;
+						cpu3_status = WRITE : BusRdX;
+						cpu3_status = PENDING : NONE;
+						cpu3_status = IDLE : NONE;
+						cpu3_status = LOCKED : bus_signal;
+						TRUE : bus_signal;
+					esac;
+				proc_num = 4 := case
+						cpu4_status = READ : BusRdS;
+						cpu4_status = WRITE : BusRdX;
+						cpu4_status = PENDING : NONE;
+						cpu4_status = IDLE : NONE;
+						cpu4_status = LOCKED : bus_signal;
+						TRUE : bus_signal;
+					esac;
+				TRUE : bus_signal;
+			esac;
+		next(bus_status) := case
+				bus_signal = NONE : DONE;
+				TRUE : WORKING;
+			esac;
+
+MODULE main
+	VAR
+		pc : proc_controller(bus.bus_status);
+		bus : bus_controller(pc.proc_num, cpu1.status, cpu2.status, cpu3.status, cpu4.status);
+		cpu1 : process cpu(bus.bus_signal, pc.proc_num, 1);
+		cpu2 : process cpu(bus.bus_signal, pc.proc_num, 2);
+		cpu3 : process cpu(bus.bus_signal, pc.proc_num, 3);
+		cpu4 : process cpu(bus.bus_signal, pc.proc_num, 4);
+
+SPEC AG ! (cpu1.L1.state = M & cpu2.L1.state = M);
+SPEC AG ! (cpu1.L1.state = M & cpu3.L1.state = M);
+SPEC AG ! (cpu1.L1.state = M & cpu4.L1.state = M);
+SPEC AG ! (cpu2.L1.state = M & cpu3.L1.state = M);
+SPEC AG ! (cpu2.L1.state = M & cpu4.L1.state = M);
+SPEC AG ! (cpu3.L1.state = M & cpu4.L1.state = M);
+						
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

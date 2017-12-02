@@ -1,0 +1,28 @@
+MODULE testmodule(signal)
+VAR
+	module_cnt : 1..100;
+	module_num : 0..3;
+
+ASSIGN
+	init(module_cnt) := 1;
+	init(module_num) := signal;
+	next(module_cnt) := case
+			signal = module_num & module_cnt = 100 : 1;
+			signal = module_num & module_var < 100 : module_cnt + 1;
+		esac;
+MODULE main
+VAR
+	arr : array 0..3 of testmodule(signal);
+	signal : 0..3;
+ASSIGN
+	init(arr[0]) := testmodule(0);
+	init(arr[1]) := testmodule(1);
+	init(arr[2]) := testmodule(2);
+	init(arr[3]) := testmodule(3);
+	init(signal) := 3;
+	next(signal) := case
+			signal = 3 : 0;
+			signal < 3 : signal + 1;
+		esac;
+
+
